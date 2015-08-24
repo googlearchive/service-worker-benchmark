@@ -14,6 +14,7 @@ To run a benchmark, clone the repository and serve it locally over HTTP:
     % git clone git@github.com:chromium/service-worker-benchmarks.git
     % cd service-worker-benchmarks/
     % ./generate_infinite_scopes.sh
+    % ./generate_static_pages.sh
     % python -mSimpleHTTPServer :1337
 
 and then open http://localhost:1337 in a browser. By default, the benchmark

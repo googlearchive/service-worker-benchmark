@@ -16,12 +16,10 @@
 
 addEventListener('fetch', function(event) {
   var url = event.request.url;
+  if (url.indexOf('html') >= 0 || url.indexOf('run_experiment') >= 0)
+    return;
+
   var responseSize = 30000;
-
-  var body = 'x';
-  for (var i = 1; i < responseSize; i += i)
-    body += body;
-
-  if (url.indexOf('html') == -1 && url.indexOf('run_experiment') == -1)
-    event.respondWith(new Response(body));
+  var body = 'x'.repeat(responseSize);
+  event.respondWith(new Response(body));
 });

@@ -33,10 +33,12 @@ rm -Rf infinite_scopes
 mkdir -p infinite_scopes
 seq 0 999 | xargs "-I{}" ln -s next_step "infinite_scopes/{}"
 ln -s ../run_trial.html infinite_scopes/run_trial.html
+ln -s ../static_pages infinite_scopes/static_pages
 
 mkdir -p infinite_scopes/next_step
 seq 0 999 | xargs "-I{}" ln -s "../{}" "infinite_scopes/next_step/{}"
 ln -s ../../run_trial.html infinite_scopes/next_step/run_trial.html
+ln -s ../../static_pages infinite_scopes/next_step/static_pages
 
 if ! [ -f infinite_scopes/run_trial.html ]; then
   echo "Self-test failed: unable to resolve infinite_scopes/run_trial.html"

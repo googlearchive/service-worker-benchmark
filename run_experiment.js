@@ -14,6 +14,45 @@
  * limitations under the License.
  */
 
+
+/**
+ * Chrome expires Service Workers on a 30 second timer, so the expiration time
+ * is on average every 45.
+ *
+ * @const
+ */
+var SERVICE_WORKER_LIFETIME = 45;
+
+/**
+ * Chrome crashes the renderer when too many Service Workers are active in a
+ * single renderer (due to an OoM condition).
+ *
+ * @const
+ */
+var MAX_WORKERS = 5;
+
+/**
+ * To ensure that we never have more than +MAX_WORKERS+ Service Workers active
+ * at the same time, we ensure that we only create a new Service Worker at the
+ * rate Service Workers are currently expiring.
+ *
+ * @const
+ */
+var SERVICE_WORKERS_PER_SECOND = MAX_WORKERS / SERVICE_WORKER_LIFETIME;
+
+/**
+ * Defines the default range of resource counts to sample.
+ *
+ * Note: when changing this value, also update the equivalent constant in the
+ * generate_static_pages.sh script.
+ *
+ * @const
+ */
+var DEFAULT_RESOURCE_COUNTS = [];
+for (var i = 0; i < 200; i += 5) {
+  DEFAULT_RESOURCE_COUNTS.push(i);
+}
+
 /** @enum */
 var RequestType = {
   IMAGE: 1,
@@ -35,16 +74,23 @@ var ServiceWorkerType = {
   RESPOND_WITH_FAST: 8
 };
 
-/** @typedef {{requestType: RequestType,
- *             serviceWorkerType: ServiceWorkerType,
- *             count: number,
- *             concurrency: number,
- *             minimumTime: number,
- *             totalLoadTime: ?number,
- *             registerBefore: boolean,
- *             unregisterAfter: boolean,
- *             isMeasurement: boolean}} */
+/**
+ * @typedef {{requestType: RequestType,
+ *            serviceWorkerType: ServiceWorkerType,
+ *            count: number,
+ *            concurrency: number,
+ *            minimumTime: number,
+ *            registerBefore: boolean,
+ *            unregisterAfter: boolean,
+ *            isMeasurement: boolean}}
+ */
 var Trial;
+
+/**
+ * @typedef {{pageLoadTimeInMs: number,
+ *            resourceLoadTimes: Array.<number>}}
+ */
+var TrialResult;
 
 /**
  * @dict
@@ -65,24 +111,28 @@ WORKER_PATH[ServiceWorkerType.RESPOND_WITH_FAST] =
  * A PromisePool invokes a series of Promisified functions, ensuring that only
  * +size+ of them are running at a time.
  *
+ * Note that +size+ must be at least one.
+ *
  * @constructor
  * @param {number} size How many things to run at the same time.
  */
 var PromisePool = function(size) {
+  if (size <= 0)
+    throw new Error('Pool size must be at least one');
   this.size_ = size;
   this.active_ = 0;
   this.backlog_ = [];
 };
 
 /**
- * Asynchronously evaluates the given +thenable+ Promise factory in this
+ * Asynchronously evaluates the given +task+ Promise factory in this
  * PromisePool.
  *
  * @this
- * @param {function (): Promise} thenable The function to invoke.
+ * @param {function (): Promise} task The function to invoke.
  * @return {Promise}
  */
-PromisePool.prototype.add = function(thenable) {
+PromisePool.prototype.add = function(task) {
   return new Promise(function(resolve, reject) {
     if (this.active_ < this.size_) {
       var schedule = function() {
@@ -93,11 +143,10 @@ PromisePool.prototype.add = function(thenable) {
       }.bind(this);
 
       this.active_++;
-      var task = Promise.resolve(thenable());
-      task.then(resolve, reject).then(schedule, schedule);
+      Promise.resolve(task()).then(resolve, reject).then(schedule, schedule);
     } else {
       this.backlog_.push(function() {
-        return thenable().then(resolve, reject);
+        return Promise.resolve(task()).then(resolve, reject);
       });
     }
   }.bind(this));
@@ -106,11 +155,11 @@ PromisePool.prototype.add = function(thenable) {
 /**
  * Asynchronously schedules an array of promises in this PromisePool.
  *
- * @param {Array.<function(): Promise>} thenables What to invoke.
+ * @param {Array.<function(): Promise>} tasks What to invoke.
  * @return {Promise}
  */
-PromisePool.prototype.addAll = function(thenables) {
-  return Promise.all(thenables.map(this.add.bind(this)));
+PromisePool.prototype.addAll = function(tasks) {
+  return Promise.all(tasks.map(this.add.bind(this)));
 };
 
 /**
@@ -131,6 +180,9 @@ PromisePool.prototype.addAll = function(thenables) {
  * @return {Promise}
  */
 PromisePool.prototype.drain = function() {
+  // Internally, this code adds +size+ tasks, saving them into the pool, each
+  // of which blocks until all have completed. At that point all are removed,
+  // and the promise is resolved.
   var promise = new Promise(function(resolve, reject) {
     var timesStarted = 0;
 
@@ -205,9 +257,10 @@ var sendXHR = function(url) {
 var sendImageRequest = function(url) {
   return new Promise(function(resolve, reject) {
     var imageTag = document.createElement('img');
-    imageTag.src = url;
     imageTag.onload = resolve;
-    imageTag.onerror = reject;
+    // TODO: _new_response.js generates invalid image.
+    imageTag.onerror = resolve;
+    imageTag.src = url;
     document.documentElement.appendChild(imageTag);
   });
 };
@@ -221,10 +274,10 @@ var sendImageRequest = function(url) {
 var sendStylesheetRequest = function(url) {
   return new Promise(function(resolve, reject) {
     var linkTag = document.createElement('link');
-    linkTag.href = url;
     linkTag.rel = 'stylesheet';
     linkTag.onload = resolve;
     linkTag.onerror = reject;
+    linkTag.href = url;
     document.documentElement.appendChild(linkTag);
   });
 };
@@ -238,9 +291,9 @@ var sendStylesheetRequest = function(url) {
 var sendScriptRequest = function(url) {
   return new Promise(function(resolve, reject) {
     var scriptTag = document.createElement('script');
-    scriptTag.src = url;
     scriptTag.onload = resolve;
     scriptTag.onerror = reject;
+    scriptTag.src = url;
     document.documentElement.appendChild(scriptTag);
   });
 };
@@ -259,16 +312,16 @@ var sendScriptRequest = function(url) {
 var loadPageInIframe = function(url) {
   return new Promise(function(resolve, reject) {
     if (window._resolveIframePromise || window._rejectIframePromise)
-      throw new Error("only one <iframe> can be active at a time");
+      throw new Error('only one <iframe> can be active at a time');
 
     window._resolveIframePromise = function(result) {
-      iframe.parentNode.removeChild(iframe);
+      iframe.remove();
       resolve(result);
       window._resolveIframePromise = window._rejectIframePromise = null;
     };
 
     window._rejectIframePromise = function(failure) {
-      iframe.parentNode.removeChild(iframe);
+      iframe.remove();
       reject(failure);
       window._resolveIframePromise = window._rejectIframePromise = null;
     };
@@ -289,37 +342,6 @@ var getDirnameOfWindowTop = function() {
 };
 
 /**
- * Reports the time required to complete the given task.
- *
- * @param {string} key Which histogram to record this value for.
- * @param {function(): Promise} thenable What task to run.
- * @return {function(): Promise} A transformed thenable.
- */
-var recordRuntime = function(key, thenable) {
-  return function() {
-    var start = performance.now();
-    var record = function(passedValue) {
-      var finish = performance.now();
-      var histogram = 'histogram_' + key;
-      var histogramJSON;
-
-      try {
-        histogramJSON = JSON.parse(localStorage[histogram]);
-      } catch (e) {
-        histogramJSON = {};
-      }
-
-      var bucket = Math.floor(finish - start);
-      histogramJSON[bucket] = (histogramJSON[bucket] || 0) + 1;
-      localStorage[histogram] = JSON.stringify(histogramJSON);
-
-      return passedValue;
-    };
-    return thenable().then(record, record);
-  };
-};
-
-/**
  * Performs the given benchmark and saves the result.
  *
  * @param {Request} trial What benchmark to perform.
@@ -327,53 +349,65 @@ var recordRuntime = function(key, thenable) {
 var runTrial = function(trial) {
   var base = getDirnameOfWindowTop();
   var pool = new PromisePool(trial.concurrency);
+  var resourceLoadTimes = [];
 
   for (var i = 0; i < trial.count; i++) {
     var suffix = '?' + encodeURIComponent(JSON.stringify(trial)) + i;
-    var thenable = null;
+    var task = null;
 
     switch (trial.requestType) {
     case RequestType.IMAGE:
-      thenable = sendImageRequest.bind(null, base + 'image.jpg' + suffix);
+      task = sendImageRequest.bind(null, base + 'image.jpg' + suffix);
       break;
     case RequestType.STYLESHEET:
-      thenable = sendStylesheetRequest.bind(null,
+      task = sendStylesheetRequest.bind(null,
                    base + 'stylesheet.css' + suffix);
       break;
     case RequestType.SCRIPT:
-      thenable = sendScriptRequest.bind(null, base + 'script.js' + suffix);
+      task = sendScriptRequest.bind(null, base + 'script.js' + suffix);
       break;
     case RequestType.XHR:
-      thenable = sendXHR.bind(null, base + 'xhr.txt' + suffix);
+      task = sendXHR.bind(null, base + 'xhr.txt' + suffix);
       break;
     case RequestType.FETCH:
-      thenable = fetch.bind(null, base + 'xhr.txt' + suffix);
+      task = fetch.bind(null, base + 'xhr.txt' + suffix);
       break;
     }
 
-    if (trial.isMeasurement)
-      thenable = recordRuntime(trial.serviceWorkerType, thenable);
-    pool.add(thenable);
+    pool.add(function() {
+      var start = performance.now();
+      return task().then(function() {
+        var end = performance.now();
+        resourceLoadTimes.push(end - start);
+      });
+    });
   }
 
   var start = performance.now();
   pool.drain().then(function() {
     var finish = performance.now();
-    var loadTime = trial.totalLoadTime =
-      finish - start + window.timeToLoadHTMLInMs;
-
-    // Save results to localStorage.
-    var results = [];
-    try {
-      var results = JSON.parse(localStorage.getItem('results')) || [];
-    } catch (e) {}
-    results.push(trial);
-    localStorage.setItem('results', JSON.stringify(results));
-
-    console.log('Trial: ', describeTrial(trial), ' took ', loadTime, ' ms');
-
-    window.top._resolveIframePromise();
+    var trialResult = {
+      pageLoadTimeInMs: finish - start + window.timeToLoadHTMLInMs,
+      resourceLoadTimes: resourceLoadTimes
+    };
+    console.log(describeTrial(trial), trialResult.pageLoadTimeInMs, 'ms');
+    window.top._resolveIframePromise(trialResult);
   });
+};
+
+/**
+ * Saves the load time for the current page as a benchmark result.
+ *
+ * @param {Trial} trial What trial to update and save.
+ */
+var runFullPageTrial = function(trial) {
+  var trialResult = {
+    pageLoadTimeInMs: performance.timing.loadEventStart -
+                      performance.timing.navigationStart,
+    resourceLoadTimes: []
+  };
+  console.log(describeTrial(trial), trialResult.pageLoadTimeInMs, 'ms');
+  window.top._resolveIframePromise(trialResult);
 };
 
 /**
@@ -393,34 +427,78 @@ var shuffleArray = function(array) {
 };
 
 /**
+ * Registers a ServiceWorker, waiting for it to activate.
+ *
+ * @param {string} scope What scope to use for the Worker.
+ * @param {string} scriptURL What JavaScript to run in the worker.
+ * @return {Promise}
+ */
+var registerWorkerAndWait = function(scope, scriptURL) {
+  return navigator.serviceWorker.register(scriptURL, {scope: scope})
+      .then(function(reg) {
+    return new Promise(function(resolve, reject) {
+      var worker = reg.installing || reg.waiting || reg.active;
+      if (worker.state == 'activated') {
+        resolve(worker);
+      } else {
+        worker.onstatechange = function() {
+          if (worker.state == 'activated')
+            resolve(worker);
+        };
+      }
+    });
+  });
+};
+
+/**
  * Runs a benchmark with the given parameters.
  *
  * @param {Trial} trial What benchmark to run.
  * @return {Promise}
  */
 var runTrialInFrame = function(trial) {
-  var scriptURL = getDirnameOfWindowTop() + WORKER_PATH[type];
-  var iframeSrc = [
+  var scriptURL = getDirnameOfWindowTop() +
+                  WORKER_PATH[trial.serviceWorkerType];
+  var generatedPrefix = [
     'infinite_scopes',
     trial.serviceWorkerType,
     trial.requestType,
     trial.count
-  ].join('/') + '/run_trial.html';
+  ].join('/');
+
+  var iframeSrc;
+  if (trial.concurrency > 0) {
+    iframeSrc = generatedPrefix + '/run_trial.html';
+  } else {
+    var resourceType;
+    for (var _requestType in RequestType) {
+      if (RequestType[_requestType] == trial.requestType)
+        resourceType = _requestType;
+    }
+    if ([RequestType.XHR, RequestType.FETCH].indexOf(trial.requestType) >= 0)
+      throw new Error("Cannot use static page with " + resourceType);
+    iframeSrc = generatedPrefix + '/static_pages/' + resourceType + '_' +
+                trial.count + '.html';
+  }
 
   var state = Promise.resolve(null);
-  if (trial.registerBefore && trial.type != ServiceWorkerType.NONE)
-    state = navigator.serviceWorker.register(scriptURL, {scope: iframeSrc});
+  if (trial.registerBefore && trial.serviceWorkerType != ServiceWorkerType.NONE)
+    state = registerWorkerAndWait(iframeSrc, scriptURL);
 
   state = state.then(function() {
     var slug = encodeURIComponent(JSON.stringify(trial));
     return loadPageInIframe(iframeSrc + '#' + slug);
   });
 
-  if (trial.unregisterAfter && trial.type != ServiceWorkerType.NONE) {
-    state = state.then(function() {
-      return navigator.serviceWorker.getRegistration(iframeSrc);
-    }).then(function(registration) {
-      return registration.unregister();
+  if (trial.unregisterAfter &&
+      trial.serviceWorkerType != ServiceWorkerType.NONE) {
+    state = state.then(function(trialResult) {
+      var promise = navigator.serviceWorker.getRegistration(iframeSrc);
+      return promise.then(function(registration) {
+        return registration.unregister();
+      }).then(function() {
+        return trialResult;
+      });
     });
   }
 
@@ -440,22 +518,21 @@ var sleep = function(delay) {
 };
 
 /**
- * Generates (and runs) an experimental trial.
+ * Generates an experimental trial.
  *
  * @return {Array.<Trial>} Which trials to invoke.
  */
 var generateExperiment = function() {
   var experiment = [];
-  var maxCount = 200;
 
   for (var _serviceWorkerType in ServiceWorkerType) {
-    for (var resourceCount = 0; resourceCount <= maxCount; resourceCount += 5) {
+    for (var i = 0; i < DEFAULT_RESOURCE_COUNTS.length; i++) {
       experiment.push({
         requestType: RequestType.IMAGE,
         serviceWorkerType: ServiceWorkerType[_serviceWorkerType],
-        count: resourceCount,
-        concurrency: 5,
-        minimumTime: 30 / 5, // at most five at a time.
+        count: DEFAULT_RESOURCE_COUNTS[i],
+        concurrency: 0, // Use a static file instead of DOM insertion.
+        minimumTime: 1 / SERVICE_WORKERS_PER_SECOND,
         registerBefore: false,
         unregisterAfter: true,
         isMeasurement: true
@@ -475,7 +552,7 @@ var generateExperiment = function() {
     warmup.push(trial);
   }
 
-  warmup[warmup.length - 1].minimumTime = 60; // force workers to stop
+  warmup[warmup.length - 1].minimumTime = SERVICE_WORKER_LIFETIME * 2;
 
   return warmup.concat(experiment);
 };
@@ -487,42 +564,27 @@ var generateExperiment = function() {
  * @param {?function(number, Trial)} reportProgress How to display progress.
  * @return {Promise} A callback for completion.
  */
-var runExperiment = function(experiment, reportProgress) {
-
-  // Resume the current experiment on crash.
-  try {
-    var trials = JSON.parse(localStorage.getItem('trials'));
-  } catch (e) {}
-
-  if (!trials || !trials.length) {
-    trials = experiment;
-    localStorage.setItem('results', JSON.stringify([]));
-  }
-
-  // Ensure that experiments are evaluated in order.
+var runExperiment = function(trials, reportProgress) {
   var queue = new PromisePool(1);
+  var results = [];
 
   for (var i = 0; i < trials.length; i++) {
     queue.add(function(i, _) {
-
       if (reportProgress)
-        reportProgress(i + (experiment.length - trials.length), trials[i]);
-
-      var trialsToSave = trials.slice(i);
-      localStorage.setItem('trials', JSON.stringify(trialsToSave));
-
-      var trial = runTrialInFrame(trials[i]);
-
-      return Promise.all([trial, sleep(trials[i].minimumTime)]);
-
+        reportProgress(i, trials[i]);
+      return Promise.all([
+        runTrialInFrame(trials[i]).then(function(trial) {
+          results.push(trial);
+        }),
+        sleep(trials[i].minimumTime)
+      ]);
     }.bind(null, i));
   }
 
   return queue.drain().then(function() {
-    localStorage.setItem('trials', JSON.stringify([]));
     if (reportProgress)
-      reportProgress(experiment.length, null);
-    return JSON.parse(localStorage.getItem('results'));
+      reportProgress(trials.length, null);
+    return results;
   });
 };
 
@@ -533,12 +595,9 @@ var startExperiment = function() {
   var experiment = generateExperiment();
   var progressBar = document.getElementsByTagName('progress')[0];
   var resultsSpan = document.getElementById('results');
-
-  // TODO(jeremyarcher): the below gives incorrect estimates on reload.
   var startTime = new Date().getTime();
 
   runExperiment(experiment, function(trialIndex, trial) {
-
     progressBar.value = trialIndex / experiment.length;
 
     // Show approximately how much time remains.
@@ -552,31 +611,42 @@ var startExperiment = function() {
       resultsSpan.textContent = (progressBar.value * 100).toFixed(1) +
           '% ETA ' + (remainingTimeInS / 60).toFixed(1) + 'm';
     }
-
-  }).then(function(results) {
-
+  }).then(function(trialResults) {
     // Group the results by count and worker type.
     var rows = {};
+    var histograms = {};
+    var histogramMax = 0;
     for (var i = 0; i < results.length; i++) {
+      var trial = experiment[i];
       var result = results[i];
-      if (result.isMeasurement)
+      if (trial.isMeasurement)
         continue;
-      var row = rows[result.count] = rows[result.count] || {};
-      row[result.serviceWorkerType] = Math.min(
-        row[result.serviceWorkerType] || Infinity,
-        result.totalLoadTime
+
+      var row = rows[trial.count] = rows[trial.count] || {};
+      row[trial.serviceWorkerType] = Math.min(
+        row[trial.serviceWorkerType] || Infinity,
+        result.pageLoadTime
       );
+
+      var histogram = histograms[trial.serviceWorkerType];
+      if (!histogram)
+        histogram = histograms[trial.serviceWorkerType] = {};
+      for (var i = 0; i < trial.resourceLoadTimes.length; i++) {
+        var loadTime = Math.round(trial.resourceLoadTimes[i]);
+        histogram[loadTime] = (histogram[loadTime] || 0) + 1;
+        histogramMax = Math.max(histogramMax, loadTime);
+      }
     }
 
-    // Generate a TSV table that is copyable into Docs.
-    var buf = [
-      'Count', 'None', 'Empty', 'Fallthrough', 'Respond With Fetch',
+    var headers = [
+      'None', 'Empty', 'Fallthrough', 'Respond With Fetch',
       'Cache Miss', 'Cache Hit', 'New Response', 'Respond With (Fast)'
-    ].join('\t') + '\n';
+    ];
 
+    // Generate a TSV table that is copyable into Docs.
+    var buf = 'Resource Count\t' + headers.join('\t') + '\n';
     var counts = Object.keys(rows);
     counts.sort(function(a, b) { return a - b });
-
     for (var i = 0; i < counts.length; i++) {
       var count = counts[i];
       var row = rows[count];
@@ -587,34 +657,25 @@ var startExperiment = function() {
       }
       buf += rowAsArray.join('\t') + '\n';
     }
-
     console.log(buf);
 
-    // Print out histogram information for each type of Service Worker.
-    var buf = [
-      'Latency (ms)', 'None', 'Empty', 'Fallthrough', 'Respond With Fetch',
-      'Cache Miss', 'Cache Hit', 'New Response', 'Respond With (Fast)'
-    ].join('\t') + '\n';
-
-    var histograms = {};
-    var upperBound = 0;
-    for (var label in ServiceWorkerType) {
-      var idx = ServiceWorkerType[label];
-      histograms[label] = JSON.parse(localStorage['histogram_' + idx]);
-      for (var key in histograms[label])
-        upperBound = Math.max(upperBound, parseInt(key, 10));
-    }
-
-    for (var i = 0; i <= upperBound; i++) {
-      var any = false;
-      var row = [i];
-      for (var label in ServiceWorkerType) {
+    // Generate a millisecond-quantized histogram of latency data.
+    var buf = 'Load Time (ms)\t' + headers.join('\t') + '\n';
+    for (var i = 0; i <= histogramMax; i++) {
+      var rowAsArray = [i];
+      for (var _serviceWorkerType in ServiceWorkerType) {
         var idx = ServiceWorkerType[label];
-        row[idx - ServiceWorkerType.NONE + 1] = histograms[label][i] || 0;
+        rowAsArray[idx - ServiceWorkerType.NONE + 1] = histograms[idx][i];
       }
-      buf += row.join('\t') + '\n';
+      buf += rowAsArray.join('\t') + '\n';
+    }
+    if (histogramMax == 0) {
+      console.log('There are no histograms available (this might be because ' +
+                  'concurrency is zero for all trials).');
+    } else {
+      console.log(buf);
     }
 
-    console.log(buf);
+    // TODO: Add computation and display of histogram data.
   });
 };
