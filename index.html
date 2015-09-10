@@ -19,14 +19,115 @@ limitations under the License.
   <title>Service Worker Benchmarks</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <style type="text/css">
-    span { display: block; }
+    body { font: 0.9em sans-serif }
     iframe { display: none; }
+    table { border-collapse: collapse; }
+    table td, table th {
+      text-align: left;
+      border: 1px solid #eee;
+      padding: 0.5em;
+    }
   </style>
   <script type="text/javascript" src="run_experiment.js"></script>
 </head>
 <body>
-  <span id="results"></span>
-  <progress></progress>
+  <table>
+    <tr>
+      <th rowspan="2">Worker Type</th>
+      <th colspan="2">0 Resources</th>
+      <th colspan="2">200 Resources</th>
+    </tr>
+    <tr>
+      <th>50%-ile</td>
+      <th>90%-ile</td>
+      <th>50%-ile</td>
+      <th>90%-ile</td>
+    </tr>
+    <tr>
+      <td>No Worker</td>
+      <td><span id="p50-none-0">-</span></td>
+      <td><span id="p90-none-0">-</span></td>
+      <td><span id="p50-none-200">-</span></td>
+      <td><span id="p90-none-200">-</span></td>
+    </tr>
+    <tr>
+      <td>Empty Worker</td>
+      <td><span id="p50-empty-0">-</span>
+        (<span id="p50-rel-empty-0">-</span>)</td>
+      <td><span id="p90-empty-0">-</span>
+        (<span id="p90-rel-empty-0">-</span>)</td>
+      <td><span id="p50-empty-200">-</span>
+        (<span id="p50-rel-empty-200">-</span>)</td>
+      <td><span id="p90-empty-200">-</span>
+        (<span id="p90-rel-empty-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>Fallthrough</td>
+      <td><span id="p50-fallthrough-0">-</span>
+        (<span id="p50-rel-fallthrough-0">-</span>)</td>
+      <td><span id="p90-fallthrough-0">-</span>
+        (<span id="p90-rel-fallthrough-0">-</span>)</td>
+      <td><span id="p50-fallthrough-200">-</span>
+        (<span id="p50-rel-fallthrough-200">-</span>)</td>
+      <td><span id="p90-fallthrough-200">-</span>
+        (<span id="p90-rel-fallthrough-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>Respond with Fetch</td>
+      <td><span id="p50-respond_with_fetch-0">-</span>
+        (<span id="p50-rel-respond_with_fetch-0">-</span>)</td>
+      <td><span id="p90-respond_with_fetch-0">-</span>
+        (<span id="p90-rel-respond_with_fetch-0">-</span>)</td>
+      <td><span id="p50-respond_with_fetch-200">-</span>
+        (<span id="p50-rel-respond_with_fetch-200">-</span>)</td>
+      <td><span id="p90-respond_with_fetch-200">-</span>
+        (<span id="p90-rel-respond_with_fetch-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>(Optimized) Respond With</td>
+      <td><span id="p50-respond_with_fast-0">-</span>
+        (<span id="p50-rel-respond_with_fast-0">-</span>)</td>
+      <td><span id="p90-respond_with_fast-0">-</span>
+        (<span id="p90-rel-respond_with_fast-0">-</span>)</td>
+      <td><span id="p50-respond_with_fast-200">-</span>
+        (<span id="p50-rel-respond_with_fast-200">-</span>)</td>
+      <td><span id="p90-respond_with_fast-200">-</span>
+        (<span id="p90-rel-respond_with_fast-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>CacheStorage Miss</td>
+      <td><span id="p50-cache_miss-0">-</span>
+        (<span id="p50-rel-cache_miss-0">-</span>)</td>
+      <td><span id="p90-cache_miss-0">-</span>
+        (<span id="p90-rel-cache_miss-0">-</span>)</td>
+      <td><span id="p50-cache_miss-200">-</span>
+        (<span id="p50-rel-cache_miss-200">-</span>)</td>
+      <td><span id="p90-cache_miss-200">-</span>
+        (<span id="p90-rel-cache_miss-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>CacheStorage Hit</td>
+      <td><span id="p50-cache_hit-0">-</span>
+        (<span id="p50-rel-cache_hit-0">-</span>)</td>
+      <td><span id="p90-cache_hit-0">-</span>
+        (<span id="p90-rel-cache_hit-0">-</span>)</td>
+      <td><span id="p50-cache_hit-200">-</span>
+        (<span id="p50-rel-cache_hit-200">-</span>)</td>
+      <td><span id="p90-cache_hit-200">-</span>
+        (<span id="p90-rel-cache_hit-200">-</span>)</td>
+    </tr>
+    <tr>
+      <td>New Response</td>
+      <td><span id="p50-new_response-0">-</span>
+        (<span id="p50-rel-new_response-0">-</span>)</td>
+      <td><span id="p90-new_response-0">-</span>
+        (<span id="p90-rel-new_response-0">-</span>)</td>
+      <td><span id="p50-new_response-200">-</span>
+        (<span id="p50-rel-new_response-200">-</span>)</td>
+      <td><span id="p90-new_response-200">-</span>
+        (<span id="p90-rel-new_response-200">-</span>)</td>
+    </tr>
+  </table>
   <script type="text/javascript">
     startExperiment();
   </script>

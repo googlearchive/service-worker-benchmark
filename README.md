@@ -13,12 +13,12 @@ To run a benchmark, clone the repository and serve it locally over HTTP:
 
     % git clone git@github.com:chromium/service-worker-benchmarks.git
     % cd service-worker-benchmarks/
-    % ./generate_infinite_scopes.sh
+    % ./generate_scopes.sh
     % ./generate_static_pages.sh
     % python -mSimpleHTTPServer :1337
 
 and then open http://localhost:1337 in a browser. By default, the benchmark
-tests the time to load 100 images under five different scenarios. These
+tests the time to load 200 images under five different scenarios. These
 correspond to cases where a Service Worker:
 
 1. is empty;
@@ -42,6 +42,21 @@ Natively, this software supports varying:
 
 as well as the Service Worker being tested. The code also generates a request
 latency distribution, allowing more granular testing of tail latency.
+
+What Service Worker behaviors are tested?
+------------------------------------------
+
+There are five different classes of behavior that are tested:
+
+1. Empty/Fallthrough workers, where the worker provides no response.
+2. New Response workers, where the response immediately resolves.
+3. Respond With Fetch, where the worker requests the result from the network.
+4. CacheStorage Hit, where the worker reads from the CacheStorage.
+5. CacheStorage Miss, where the worker attempts to read from the cache before
+   hitting network.
+
+as well as an experimental Respond With (Fast) Fetch that dynamically rewrites
+a Respond With Fetch worker into a renderer fallback.
 
 Does this test only work in Chrome?
 ------------------------------------

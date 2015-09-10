@@ -19,7 +19,7 @@
  * converting respondWith(fetch(...)) into fallback responses.
  *
  * @param {function(Event)} fetchHandler How to handle fetch events.
- * @returns {function(Event)} A modified, optimized fetch event handler.
+ * @return {function(Event)} A modified, optimized fetch event handler.
  */
 var optimizeFetch = function(fetchHandler) {
   // Track which request fired each Promise.
@@ -39,9 +39,9 @@ var optimizeFetch = function(fetchHandler) {
   // a fallback response.
   return function(event) {
     var _respondWith = event.respondWith.bind(event);
-    event.respondWith = function(res) {
-      if (res.__fetchRequest != event.request)
-        return _respondWith(res);
+    event.respondWith = function(promise) {
+      if (requests.get(promise) != event.request)
+        return _respondWith(promise);
     };
     return fetchHandler(event);
   };

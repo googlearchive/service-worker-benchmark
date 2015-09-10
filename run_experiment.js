@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 /**
  * Chrome expires Service Workers on a 30 second timer, so the expiration time
  * is on average every 45.
@@ -41,44 +40,53 @@ var MAX_WORKERS = 5;
 var SERVICE_WORKERS_PER_SECOND = MAX_WORKERS / SERVICE_WORKER_LIFETIME;
 
 /**
- * Defines the default range of resource counts to sample.
- *
- * Note: when changing this value, also update the equivalent constant in the
- * generate_static_pages.sh script.
+ * Configures how many requests to make to the Service Worker. If you update
+ * this value, be sure to also update the HTML file.
  *
  * @const
  */
-var DEFAULT_RESOURCE_COUNTS = [];
-for (var i = 0; i < 200; i += 5) {
-  DEFAULT_RESOURCE_COUNTS.push(i);
-}
+var DEFAULT_REQUEST_COUNTS = [0, 200];
 
-/** @enum */
+/**
+ * Configures which percentiles are displayed in the table. If you update this
+ * value, be sure to also update the HTML file.
+ *
+ * @const
+ */
+var DEFAULT_PERCENTILES = [50, 90];
+
+/**
+ * Configures the number of times to repeat each trial.
+ */
+var NUMBER_OF_TRIALS = 5;
+
+/** @enum {string} */
 var RequestType = {
-  IMAGE: 1,
-  STYLESHEET: 2,
-  SCRIPT: 3,
-  XHR: 4,
-  FETCH: 5
+  IMAGE: 'IMAGE',
+  STYLESHEET: 'STYLESHEET',
+  SCRIPT: 'SCRIPT',
+  XHR: 'XHR',
+  FETCH: 'FETCH'
 };
 
-/** @enum */
+/** @enum {string} */
 var ServiceWorkerType = {
-  NONE: 1,
-  EMPTY: 2,
-  FALLTHROUGH: 3,
-  RESPOND_WITH_FETCH: 4,
-  CACHE_MISS: 5,
-  CACHE_HIT: 6,
-  NEW_RESPONSE: 7,
-  RESPOND_WITH_FAST: 8
+  NONE: 'NONE',
+  EMPTY: 'EMPTY',
+  FALLTHROUGH: 'FALLTHROUGH',
+  RESPOND_WITH_FETCH: 'RESPOND_WITH_FETCH',
+  CACHE_MISS: 'CACHE_MISS',
+  CACHE_HIT: 'CACHE_HIT',
+  NEW_RESPONSE: 'NEW_RESPONSE',
+  RESPOND_WITH_FAST: 'RESPOND_WITH_FAST'
 };
 
 /**
  * @typedef {{requestType: RequestType,
- *            serviceWorkerType: ServiceWorkerType,
- *            count: number,
+ *            requestCount: number,
+ *            requestPrefix: number,
  *            concurrency: number,
+ *            serviceWorkerType: ServiceWorkerType,
  *            minimumTime: number,
  *            registerBefore: boolean,
  *            unregisterAfter: boolean,
@@ -189,9 +197,8 @@ PromisePool.prototype.drain = function() {
     for (var i = 0; i < this.size_; i++) {
       this.add(function() {
         timesStarted++;
-        if (timesStarted == this.size_) {
+        if (timesStarted == this.size_)
           resolve();
-        }
         return promise;
       }.bind(this));
     }
@@ -207,21 +214,9 @@ PromisePool.prototype.drain = function() {
  * @return {string}
  */
 var describeTrial = function(trial) {
-  var requestType = '';
-  for (var k in RequestType) {
-    if (RequestType[k] == trial.requestType)
-      requestType = k;
-  }
-
-  var serviceWorkerType = '';
-  for (var k in ServiceWorkerType) {
-    if (ServiceWorkerType[k] == trial.serviceWorkerType)
-      serviceWorkerType = k;
-  }
-
-  return ('(requestType=' + requestType + ', serviceWorkerType=' +
-          serviceWorkerType + ', count=' + trial.count + ', concurrency=' +
-          trial.concurrency + ')');
+  return ('(requestType=' + trial.requestType + ', serviceWorkerType=' +
+          trial.serviceWorkerType + ', requestCount=' + trial.requestCount +
+          ', concurrency=' + trial.concurrency + ')');
 };
 
 /**
@@ -235,9 +230,8 @@ var sendXHR = function(url) {
     var xhr = new XMLHttpRequest;
     xhr.open('GET', url, true);
     xhr.onreadystatechange = function() {
-      if (xhr.readyState != 4) {
+      if (xhr.readyState != 4)
         return;
-      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(xhr.responseText);
       } else {
@@ -351,7 +345,7 @@ var runTrial = function(trial) {
   var pool = new PromisePool(trial.concurrency);
   var resourceLoadTimes = [];
 
-  for (var i = 0; i < trial.count; i++) {
+  for (var i = 0; i < trial.requestCount; i++) {
     var suffix = '?' + encodeURIComponent(JSON.stringify(trial)) + i;
     var task = null;
 
@@ -402,8 +396,7 @@ var runTrial = function(trial) {
  */
 var runFullPageTrial = function(trial) {
   var trialResult = {
-    pageLoadTimeInMs: performance.timing.loadEventStart -
-                      performance.timing.navigationStart,
+    pageLoadTimeInMs: window._loadEventStart - window.top._registerStart,
     resourceLoadTimes: []
   };
   console.log(describeTrial(trial), trialResult.pageLoadTimeInMs, 'ms');
@@ -459,31 +452,29 @@ var registerWorkerAndWait = function(scope, scriptURL) {
 var runTrialInFrame = function(trial) {
   var scriptURL = getDirnameOfWindowTop() +
                   WORKER_PATH[trial.serviceWorkerType];
-  var generatedPrefix = [
-    'infinite_scopes',
-    trial.serviceWorkerType,
-    trial.requestType,
-    trial.count
-  ].join('/');
+  var generatedPrefix = 'scopes/' + trial.requestPrefix;
 
   var iframeSrc;
   if (trial.concurrency > 0) {
     iframeSrc = generatedPrefix + '/run_trial.html';
   } else {
-    var resourceType;
-    for (var _requestType in RequestType) {
-      if (RequestType[_requestType] == trial.requestType)
-        resourceType = _requestType;
-    }
     if ([RequestType.XHR, RequestType.FETCH].indexOf(trial.requestType) >= 0)
-      throw new Error("Cannot use static page with " + resourceType);
-    iframeSrc = generatedPrefix + '/static_pages/' + resourceType + '_' +
-                trial.count + '.html';
+      throw new Error('Cannot use static page with ' + trial.requestType);
+    iframeSrc = generatedPrefix + '/static_pages/' + trial.requestType + '_' +
+                trial.requestCount + '.html';
   }
 
+  window.top._registerStart = new Date().getTime();
+
   var state = Promise.resolve(null);
-  if (trial.registerBefore && trial.serviceWorkerType != ServiceWorkerType.NONE)
-    state = registerWorkerAndWait(iframeSrc, scriptURL);
+  if (trial.registerBefore) {
+    if (trial.serviceWorkerType != ServiceWorkerType.NONE) {
+      state = registerWorkerAndWait(iframeSrc, scriptURL);
+    } else {
+      var url = getDirnameOfWindowTop() + WORKER_PATH[ServiceWorkerType.EMPTY];
+      state = fetch(url);
+    }
+  }
 
   state = state.then(function() {
     var slug = encodeURIComponent(JSON.stringify(trial));
@@ -495,7 +486,17 @@ var runTrialInFrame = function(trial) {
     state = state.then(function(trialResult) {
       var promise = navigator.serviceWorker.getRegistration(iframeSrc);
       return promise.then(function(registration) {
-        return registration.unregister();
+        // Calling unregister() only starts the unregistration process, so
+        // we need to poll getRegistration to be certain that the worker is
+        // gone. 
+        var wait_for_actually_unregistered = function() {
+          var regPromise = navigator.serviceWorker.getRegistration(iframeSrc);
+          return regPromise.then(function(reg) {
+            if (reg)
+              return sleep(300).then(wait_for_actually_unregistered);
+          });
+        };
+        return registration.unregister().then(wait_for_actually_unregistered);
       }).then(function() {
         return trialResult;
       });
@@ -515,46 +516,6 @@ var sleep = function(delay) {
   return new Promise(function(resolve, reject) {
     setTimeout(resolve, delay * 1000);
   });
-};
-
-/**
- * Generates an experimental trial.
- *
- * @return {Array.<Trial>} Which trials to invoke.
- */
-var generateExperiment = function() {
-  var experiment = [];
-
-  for (var _serviceWorkerType in ServiceWorkerType) {
-    for (var i = 0; i < DEFAULT_RESOURCE_COUNTS.length; i++) {
-      experiment.push({
-        requestType: RequestType.IMAGE,
-        serviceWorkerType: ServiceWorkerType[_serviceWorkerType],
-        count: DEFAULT_RESOURCE_COUNTS[i],
-        concurrency: 0, // Use a static file instead of DOM insertion.
-        minimumTime: 1 / SERVICE_WORKERS_PER_SECOND,
-        registerBefore: false,
-        unregisterAfter: true,
-        isMeasurement: true
-      });
-    }
-  }
-
-  shuffleArray(experiment);
-
-  var warmup = [];
-
-  for (var i = 0; i < experiment.length; i++) {
-    var trial = JSON.parse(JSON.stringify(experiment[i]));
-    trial.registerBefore = true;
-    trial.unregisterAfter = false;
-    trial.isMeasurement = false;
-    warmup.push(trial);
-  }
-
-  warmup[warmup.length - 1].minimumTime = SERVICE_WORKER_LIFETIME * 2;
-
-  return warmup.concat(experiment);
 };
 
 /**
@@ -589,93 +550,106 @@ var runExperiment = function(trials, reportProgress) {
 };
 
 /**
- * Starts running an experiment on the current page.
+ * Computes the given percentile value from the given array.
+ *
+ * @param {Array.<number>} array Source data.
+ * @param {number} fraction What percentile to return.
+ * @return {number} The value at that percentile.
+ */
+var percentile = function(array, fraction) {
+  var copy = array.slice();
+  copy.sort(function(a, b) { return a < b ? -1 : 1 });
+  return copy[Math.round((copy.length - 1) * fraction)];
+};
+
+/**
+ * Puts the given measurement into the element with the given ID.
+ * If this measurement is relative, the element is styled appropriately.
+ *
+ * @param {string} id Where to put this measurement.
+ * @param {number} measurement The value of this measurement.
+ * @param {?boolean} isRelative Whether to style this number as a difference.
+ */
+var displayResult = function(id, measurement, isRelative) {
+  var elem = document.getElementById(id);
+  var rounded = Math.round(measurement);
+  if (isRelative) {
+    elem.textContent = (
+      (measurement > 0 ? '+' : '') + Math.round(measurement * 100) + '%');
+    if (measurement < 0)
+      elem.style.color = '#390';
+    else if (measurement > 0)
+      elem.style.color = '#a00';
+  } else {
+    elem.textContent = Math.round(rounded);
+  }
+};
+
+/**
+ * Runs the Service Worker Benchmark.
  */
 var startExperiment = function() {
-  var experiment = generateExperiment();
-  var progressBar = document.getElementsByTagName('progress')[0];
-  var resultsSpan = document.getElementById('results');
-  var startTime = new Date().getTime();
+  var experiment = [];
+  var counts = DEFAULT_REQUEST_COUNTS;
+  var percentiles = DEFAULT_PERCENTILES;
 
-  runExperiment(experiment, function(trialIndex, trial) {
-    progressBar.value = trialIndex / experiment.length;
-
-    // Show approximately how much time remains.
-    if (!trial) {
-      resultsSpan.textContent = 'Complete!';
-    } else {
-      var timeElapsedInS = (new Date().getTime() - startTime) / 1000;
-      var totalTimeInS = timeElapsedInS / progressBar.value;
-      var remainingTimeInS = totalTimeInS * (1 - progressBar.value);
-
-      resultsSpan.textContent = (progressBar.value * 100).toFixed(1) +
-          '% ETA ' + (remainingTimeInS / 60).toFixed(1) + 'm';
-    }
-  }).then(function(trialResults) {
-    // Group the results by count and worker type.
-    var rows = {};
-    var histograms = {};
-    var histogramMax = 0;
-    for (var i = 0; i < results.length; i++) {
-      var trial = experiment[i];
-      var result = results[i];
-      if (trial.isMeasurement)
-        continue;
-
-      var row = rows[trial.count] = rows[trial.count] || {};
-      row[trial.serviceWorkerType] = Math.min(
-        row[trial.serviceWorkerType] || Infinity,
-        result.pageLoadTime
-      );
-
-      var histogram = histograms[trial.serviceWorkerType];
-      if (!histogram)
-        histogram = histograms[trial.serviceWorkerType] = {};
-      for (var i = 0; i < trial.resourceLoadTimes.length; i++) {
-        var loadTime = Math.round(trial.resourceLoadTimes[i]);
-        histogram[loadTime] = (histogram[loadTime] || 0) + 1;
-        histogramMax = Math.max(histogramMax, loadTime);
+  // Vary number of resources and worker type.
+  var trialIndex = 0;
+  for (var i = 0; i < counts.length; i++) {
+    for (var type in ServiceWorkerType) {
+      for (var j = 0; j < NUMBER_OF_TRIALS; j++) {
+        experiment.push({
+          requestType: RequestType.IMAGE,
+          requestCount: counts[i],
+          requestPrefix: trialIndex++,
+          serviceWorkerType: type,
+          concurrency: 0,
+          registerBefore: true,
+          unregisterAfter: true,
+          isMeasurement: true,
+          minimumTime: 1 / SERVICE_WORKERS_PER_SECOND
+        });
       }
     }
+  }
 
-    var headers = [
-      'None', 'Empty', 'Fallthrough', 'Respond With Fetch',
-      'Cache Miss', 'Cache Hit', 'New Response', 'Respond With (Fast)'
-    ];
+  shuffleArray(experiment);
 
-    // Generate a TSV table that is copyable into Docs.
-    var buf = 'Resource Count\t' + headers.join('\t') + '\n';
-    var counts = Object.keys(rows);
-    counts.sort(function(a, b) { return a - b });
+  runExperiment(experiment).then(function(results) {
+    // Aggregate data across all trials.
+    var metrics = {};
     for (var i = 0; i < counts.length; i++) {
-      var count = counts[i];
-      var row = rows[count];
-      var rowAsArray = [count];
-      for (var label in ServiceWorkerType) {
-        var idx = ServiceWorkerType[label];
-        rowAsArray[idx - ServiceWorkerType.NONE + 1] = row[idx];
-      }
-      buf += rowAsArray.join('\t') + '\n';
-    }
-    console.log(buf);
-
-    // Generate a millisecond-quantized histogram of latency data.
-    var buf = 'Load Time (ms)\t' + headers.join('\t') + '\n';
-    for (var i = 0; i <= histogramMax; i++) {
-      var rowAsArray = [i];
-      for (var _serviceWorkerType in ServiceWorkerType) {
-        var idx = ServiceWorkerType[label];
-        rowAsArray[idx - ServiceWorkerType.NONE + 1] = histograms[idx][i];
-      }
-      buf += rowAsArray.join('\t') + '\n';
-    }
-    if (histogramMax == 0) {
-      console.log('There are no histograms available (this might be because ' +
-                  'concurrency is zero for all trials).');
-    } else {
-      console.log(buf);
+      for (var type in ServiceWorkerType)
+        metrics[type + '_' + counts[i]] = [];
     }
 
-    // TODO: Add computation and display of histogram data.
+    for (var i = 0; i < results.length; i++) {
+      var result = results[i];
+      var trial = experiment[i];
+      metrics[trial.serviceWorkerType + '_' + trial.requestCount].push(
+        result.pageLoadTimeInMs);
+    }
+
+    // Display the result as a table.
+    for (var i = 0; i < counts.length; i++) {
+      for (var type in ServiceWorkerType) {
+        for (var p = 0; p < percentiles.length; p++) {
+          var pct = percentiles[p];
+          var value = percentile(metrics[type + '_' + counts[i]], pct / 100);
+          var base =  percentile(metrics['NONE_' + counts[i]], pct / 100);
+
+          displayResult(
+            'p' + pct + '-' + type.toLowerCase() + '-' + counts[i],
+            value);
+
+          if (type != ServiceWorkerType.NONE) {
+            displayResult(
+              'p' + pct + '-rel-' + type.toLowerCase() + '-' + counts[i],
+              (value - base) / base, true);
+          }
+        }
+      }
+    }
+    return metrics;
   });
 };

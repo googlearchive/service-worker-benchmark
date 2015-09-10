@@ -52,14 +52,20 @@ for file in $(find static_pages -name '*.html'); do
   cat >>$file <<EOF
 <script type='text/javascript'>
   window.onload = function() {
+    window._loadEventStart = new Date().getTime();
+    /* Only report to parent frame if run externally; i.e. when not used in
+     * the Chromium telemetry performance testing infrastructure. */
+    if (window.location.search.indexOf('?telemetry') != -1)
+      return;
+
     var myURL = window.location.href;
-    var dirname = myURL.replace(/(infinite_scopes\/.*\/)?[^/]+$/, '');
+    var dirname = myURL.replace(/(scopes\/.*\/)?[^/]+$/, '');
     var path = dirname + '../run_experiment.js';
     var script = document.createElement('script');
     script.src = path;
     document.documentElement.appendChild(script);
     script.onload = function() {
-      var hash = window.location.hash.substring(1);
+      var hash = window.location.hash.substring(1) || '{}';
       runFullPageTrial(JSON.parse(decodeURIComponent(hash)));
     };
   };
