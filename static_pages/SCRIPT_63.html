@@ -1,0 +1,83 @@
+<script src='script.js?1'></script>
+<script src='script.js?2'></script>
+<script src='script.js?3'></script>
+<script src='script.js?4'></script>
+<script src='script.js?5'></script>
+<script src='script.js?6'></script>
+<script src='script.js?7'></script>
+<script src='script.js?8'></script>
+<script src='script.js?9'></script>
+<script src='script.js?10'></script>
+<script src='script.js?11'></script>
+<script src='script.js?12'></script>
+<script src='script.js?13'></script>
+<script src='script.js?14'></script>
+<script src='script.js?15'></script>
+<script src='script.js?16'></script>
+<script src='script.js?17'></script>
+<script src='script.js?18'></script>
+<script src='script.js?19'></script>
+<script src='script.js?20'></script>
+<script src='script.js?21'></script>
+<script src='script.js?22'></script>
+<script src='script.js?23'></script>
+<script src='script.js?24'></script>
+<script src='script.js?25'></script>
+<script src='script.js?26'></script>
+<script src='script.js?27'></script>
+<script src='script.js?28'></script>
+<script src='script.js?29'></script>
+<script src='script.js?30'></script>
+<script src='script.js?31'></script>
+<script src='script.js?32'></script>
+<script src='script.js?33'></script>
+<script src='script.js?34'></script>
+<script src='script.js?35'></script>
+<script src='script.js?36'></script>
+<script src='script.js?37'></script>
+<script src='script.js?38'></script>
+<script src='script.js?39'></script>
+<script src='script.js?40'></script>
+<script src='script.js?41'></script>
+<script src='script.js?42'></script>
+<script src='script.js?43'></script>
+<script src='script.js?44'></script>
+<script src='script.js?45'></script>
+<script src='script.js?46'></script>
+<script src='script.js?47'></script>
+<script src='script.js?48'></script>
+<script src='script.js?49'></script>
+<script src='script.js?50'></script>
+<script src='script.js?51'></script>
+<script src='script.js?52'></script>
+<script src='script.js?53'></script>
+<script src='script.js?54'></script>
+<script src='script.js?55'></script>
+<script src='script.js?56'></script>
+<script src='script.js?57'></script>
+<script src='script.js?58'></script>
+<script src='script.js?59'></script>
+<script src='script.js?60'></script>
+<script src='script.js?61'></script>
+<script src='script.js?62'></script>
+<script src='script.js?63'></script>
+<script type='text/javascript'>
+  window.onload = function() {
+    window._loadEventStart = new Date().getTime();
+    /* Only report to parent frame if run externally; i.e. when not used in
+     * the Chromium telemetry performance testing infrastructure. */
+    if (window.location.search.indexOf('?telemetry') != -1)
+      return;
+
+    var myURL = window.location.href;
+    var dirname = myURL.replace(/(scopes\/.*\/)?[^/]+$/, '');
+    var path = dirname + '../run_experiment.js';
+    var script = document.createElement('script');
+    script.src = path;
+    document.documentElement.appendChild(script);
+    script.onload = function() {
+      var hash = window.location.hash.substring(1) || '{}';
+      runFullPageTrial(JSON.parse(decodeURIComponent(hash)));
+    };
+  };
+</script>

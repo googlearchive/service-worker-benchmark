@@ -1,0 +1,42 @@
+<link rel='stylesheet' href='stylesheet.css?1'/>
+<link rel='stylesheet' href='stylesheet.css?2'/>
+<link rel='stylesheet' href='stylesheet.css?3'/>
+<link rel='stylesheet' href='stylesheet.css?4'/>
+<link rel='stylesheet' href='stylesheet.css?5'/>
+<link rel='stylesheet' href='stylesheet.css?6'/>
+<link rel='stylesheet' href='stylesheet.css?7'/>
+<link rel='stylesheet' href='stylesheet.css?8'/>
+<link rel='stylesheet' href='stylesheet.css?9'/>
+<link rel='stylesheet' href='stylesheet.css?10'/>
+<link rel='stylesheet' href='stylesheet.css?11'/>
+<link rel='stylesheet' href='stylesheet.css?12'/>
+<link rel='stylesheet' href='stylesheet.css?13'/>
+<link rel='stylesheet' href='stylesheet.css?14'/>
+<link rel='stylesheet' href='stylesheet.css?15'/>
+<link rel='stylesheet' href='stylesheet.css?16'/>
+<link rel='stylesheet' href='stylesheet.css?17'/>
+<link rel='stylesheet' href='stylesheet.css?18'/>
+<link rel='stylesheet' href='stylesheet.css?19'/>
+<link rel='stylesheet' href='stylesheet.css?20'/>
+<link rel='stylesheet' href='stylesheet.css?21'/>
+<link rel='stylesheet' href='stylesheet.css?22'/>
+<script type='text/javascript'>
+  window.onload = function() {
+    window._loadEventStart = new Date().getTime();
+    /* Only report to parent frame if run externally; i.e. when not used in
+     * the Chromium telemetry performance testing infrastructure. */
+    if (window.location.search.indexOf('?telemetry') != -1)
+      return;
+
+    var myURL = window.location.href;
+    var dirname = myURL.replace(/(scopes\/.*\/)?[^/]+$/, '');
+    var path = dirname + '../run_experiment.js';
+    var script = document.createElement('script');
+    script.src = path;
+    document.documentElement.appendChild(script);
+    script.onload = function() {
+      var hash = window.location.hash.substring(1) || '{}';
+      runFullPageTrial(JSON.parse(decodeURIComponent(hash)));
+    };
+  };
+</script>
